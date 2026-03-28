@@ -49,6 +49,8 @@ WA Sensai is a rooted Android app built for extracting WhatsApp data from a real
 
 This project was created for internal personal use, with the main focus on data integrity, media recovery, export reliability, and smooth offline viewing of large real-world chat history. The primary validated target was WhatsApp Business, not public multi-device compatibility across every WhatsApp variant.
 
+The overall app experience, especially the viewer side, was built with the intention of mirroring the current WhatsApp Business feel and flow as closely as practical within this offline archive-viewing model.
+
 > [!IMPORTANT]
 > WA Sensai was built and tested mainly for an internal rooted WhatsApp Business workflow. Regular WhatsApp fallback support exists, but it was not the main validated target during development.
 
