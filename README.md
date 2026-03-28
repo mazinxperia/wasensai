@@ -33,6 +33,9 @@ Built for high-integrity local extraction, packaging, and offline viewing of rea
 - [📌 Repository Notes](#-repository-notes)
 - [📣 Internal Use Disclaimer](#-internal-use-disclaimer)
 
+> [!TIP]
+> Use the links above to jump to a section. Then click the expand row under each heading to open the full content.
+
 ## ⚡ Quick Glance
 
 | Item | Details |
@@ -54,8 +57,10 @@ The overall app experience, especially the viewer side, was built with the inten
 > [!IMPORTANT]
 > WA Sensai was built and tested mainly for an internal rooted WhatsApp Business workflow. Regular WhatsApp fallback support exists, but it was not the main validated target during development.
 
+## 🎯 Scope And Intent
+
 <details>
-<summary><strong>🎯 Scope And Intent</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -72,8 +77,10 @@ WA Sensai was not originally built as a public consumer product. It was develope
 
 </details>
 
+## 🧪 Tested Environment
+
 <details>
-<summary><strong>🧪 Tested Environment</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -102,8 +109,10 @@ Important testing note:
 
 </details>
 
+## ⚠️ Compatibility Notes
+
 <details>
-<summary><strong>⚠️ Compatibility Notes</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -115,8 +124,10 @@ Important testing note:
 
 </details>
 
+## 🛠️ App Specification
+
 <details>
-<summary><strong>🛠️ App Specification</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -135,8 +146,10 @@ Important testing note:
 
 </details>
 
+## ✨ What The App Does
+
 <details>
-<summary><strong>✨ What The App Does</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -176,8 +189,10 @@ The viewer was refactored heavily to handle larger exports more safely and more 
 
 </details>
 
+## 📤 High-Level Extraction Flow
+
 <details>
-<summary><strong>📤 High-Level Extraction Flow</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -202,8 +217,10 @@ Important design goals during extraction:
 
 </details>
 
+## 🗂️ How `.waview` Storage Works
+
 <details>
-<summary><strong>🗂️ How <code>.waview</code> Storage Works</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -232,8 +249,10 @@ Implementation direction used in this project:
 
 </details>
 
+## 🧱 Example Extracted Data Structure
+
 <details>
-<summary><strong>🧱 Example Extracted Data Structure</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -283,8 +302,10 @@ Notes about this structure:
 
 </details>
 
+## 👁️ How The Viewer Reads Data
+
 <details>
-<summary><strong>👁️ How The Viewer Reads Data</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -317,8 +338,10 @@ Important loading note:
 
 </details>
 
+## 🏗️ Architecture Overview
+
 <details>
-<summary><strong>🏗️ Architecture Overview</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -362,8 +385,10 @@ The app is organized into clear layers:
 
 </details>
 
+## 🧩 Current App Architecture In Practice
+
 <details>
-<summary><strong>🧩 Current App Architecture In Practice</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -401,8 +426,10 @@ The current codebase reflects both phases together.
 
 </details>
 
+## 🚧 Major Development Setbacks And Fixes
+
 <details>
-<summary><strong>🚧 Major Development Setbacks And Fixes</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -479,8 +506,10 @@ Fix direction:
 
 </details>
 
+## 📝 Handoff Summary
+
 <details>
-<summary><strong>📝 Handoff Summary</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -515,8 +544,10 @@ The current app keeps the stable extractor/archive design from the first major h
 
 </details>
 
+## 🚀 Performance Notes
+
 <details>
-<summary><strong>🚀 Performance Notes</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -531,8 +562,10 @@ Exact profiled CPU and RAM numbers for the Galaxy S22 Ultra were not preserved a
 
 </details>
 
+## 🔒 Privacy And Data Handling
+
 <details>
-<summary><strong>🔒 Privacy And Data Handling</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -545,8 +578,10 @@ Exact profiled CPU and RAM numbers for the Galaxy S22 Ultra were not preserved a
 
 </details>
 
+## 🧱 Build And Run Notes
+
 <details>
-<summary><strong>🧱 Build And Run Notes</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -589,8 +624,10 @@ Important note:
 - those edited screenshots were also visually pushed more toward a GTA San Andreas style vibe
 - the edited screenshots are the chat list screen and the chat window screen
 
+## 📁 Project Structure
+
 <details>
-<summary><strong>📁 Project Structure</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -687,8 +724,10 @@ WASensai/
 
 </details>
 
+## 📌 Repository Notes
+
 <details>
-<summary><strong>📌 Repository Notes</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
@@ -700,8 +739,10 @@ WASensai/
 
 </details>
 
+## 📣 Internal Use Disclaimer
+
 <details>
-<summary><strong>📣 Internal Use Disclaimer</strong></summary>
+<summary><strong>Click to expand this section</strong></summary>
 
 <br>
 
