@@ -10,33 +10,33 @@ Built for high-integrity local extraction, packaging, and offline viewing of rea
 
 ---
 
-## 📚 Table Of Contents
+## Table Of Contents
 
-- [🎯 Scope And Intent](#-scope-and-intent)
-- [🧪 Tested Environment](#-tested-environment)
-- [⚠️ Compatibility Notes](#️-compatibility-notes)
-- [🛠️ App Specification](#️-app-specification)
-- [✨ What The App Does](#-what-the-app-does)
-- [📤 High-Level Extraction Flow](#-high-level-extraction-flow)
-- [🗂️ How `.waview` Storage Works](#️-how-waview-storage-works)
-- [🧱 Example Extracted Data Structure](#-example-extracted-data-structure)
-- [👁️ How The Viewer Reads Data](#️-how-the-viewer-reads-data)
-- [🏗️ Architecture Overview](#️-architecture-overview)
-- [🧩 Current App Architecture In Practice](#-current-app-architecture-in-practice)
-- [🚧 Major Development Setbacks And Fixes](#-major-development-setbacks-and-fixes)
-- [📝 Handoff Summary](#-handoff-summary)
-- [🚀 Performance Notes](#-performance-notes)
-- [🔒 Privacy And Data Handling](#-privacy-and-data-handling)
-- [🧱 Build And Run Notes](#-build-and-run-notes)
-- [🖼️ Screenshots](#️-screenshots)
-- [📁 Project Structure](#-project-structure)
-- [📌 Repository Notes](#-repository-notes)
-- [📣 Internal Use Disclaimer](#-internal-use-disclaimer)
+- [Scope And Intent](#scope-and-intent)
+- [Tested Environment](#tested-environment)
+- [Compatibility Notes](#compatibility-notes)
+- [App Specification](#app-specification)
+- [What The App Does](#what-the-app-does)
+- [High-Level Extraction Flow](#high-level-extraction-flow)
+- [How `.waview` Storage Works](#how-waview-storage-works)
+- [Example Extracted Data Structure](#example-extracted-data-structure)
+- [How The Viewer Reads Data](#how-the-viewer-reads-data)
+- [Architecture Overview](#architecture-overview)
+- [Current App Architecture In Practice](#current-app-architecture-in-practice)
+- [Major Development Setbacks And Fixes](#major-development-setbacks-and-fixes)
+- [Handoff Summary](#handoff-summary)
+- [Performance Notes](#performance-notes)
+- [Privacy And Data Handling](#privacy-and-data-handling)
+- [Build And Run Notes](#build-and-run-notes)
+- [Screenshots](#screenshots)
+- [Project Structure](#project-structure)
+- [Repository Notes](#repository-notes)
+- [Internal Use Disclaimer](#internal-use-disclaimer)
 
 > [!TIP]
 > Use the links above to jump to a section. Then click the expand row under each heading to open the full content.
 
-## ⚡ Quick Glance
+## Quick Glance
 
 | Item | Details |
 | --- | --- |
@@ -57,10 +57,10 @@ The overall app experience, especially the viewer side, was built with the inten
 > [!IMPORTANT]
 > WA Sensai was built and tested mainly for an internal rooted WhatsApp Business workflow. Regular WhatsApp fallback support exists, but it was not the main validated target during development.
 
-## 🎯 Scope And Intent
+## Scope And Intent
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -77,10 +77,10 @@ WA Sensai was not originally built as a public consumer product. It was develope
 
 </details>
 
-## 🧪 Tested Environment
+## Tested Environment
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -109,10 +109,10 @@ Important testing note:
 
 </details>
 
-## ⚠️ Compatibility Notes
+## Compatibility Notes
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -124,10 +124,10 @@ Important testing note:
 
 </details>
 
-## 🛠️ App Specification
+## App Specification
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -146,10 +146,10 @@ Important testing note:
 
 </details>
 
-## ✨ What The App Does
+## What The App Does
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -189,10 +189,10 @@ The viewer was refactored heavily to handle larger exports more safely and more 
 
 </details>
 
-## 📤 High-Level Extraction Flow
+## High-Level Extraction Flow
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -217,10 +217,10 @@ Important design goals during extraction:
 
 </details>
 
-## 🗂️ How `.waview` Storage Works
+## How `.waview` Storage Works
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -249,10 +249,10 @@ Implementation direction used in this project:
 
 </details>
 
-## 🧱 Example Extracted Data Structure
+## Example Extracted Data Structure
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -302,10 +302,10 @@ Notes about this structure:
 
 </details>
 
-## 👁️ How The Viewer Reads Data
+## How The Viewer Reads Data
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -338,10 +338,10 @@ Important loading note:
 
 </details>
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -385,10 +385,10 @@ The app is organized into clear layers:
 
 </details>
 
-## 🧩 Current App Architecture In Practice
+## Current App Architecture In Practice
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -426,10 +426,10 @@ The current codebase reflects both phases together.
 
 </details>
 
-## 🚧 Major Development Setbacks And Fixes
+## Major Development Setbacks And Fixes
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -506,10 +506,10 @@ Fix direction:
 
 </details>
 
-## 📝 Handoff Summary
+## Handoff Summary
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -544,10 +544,10 @@ The current app keeps the stable extractor/archive design from the first major h
 
 </details>
 
-## 🚀 Performance Notes
+## Performance Notes
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -562,10 +562,10 @@ Exact profiled CPU and RAM numbers for the Galaxy S22 Ultra were not preserved a
 
 </details>
 
-## 🔒 Privacy And Data Handling
+## Privacy And Data Handling
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -578,10 +578,10 @@ Exact profiled CPU and RAM numbers for the Galaxy S22 Ultra were not preserved a
 
 </details>
 
-## 🧱 Build And Run Notes
+## Build And Run Notes
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -602,7 +602,7 @@ Exact profiled CPU and RAM numbers for the Galaxy S22 Ultra were not preserved a
 
 </details>
 
-## 🖼️ Screenshots
+## Screenshots
 
 Main app screens:
 
@@ -624,10 +624,10 @@ Important note:
 - those edited screenshots were also visually pushed more toward a GTA San Andreas style vibe
 - the edited screenshots are the chat list screen and the chat window screen
 
-## 📁 Project Structure
+## Project Structure
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -724,10 +724,10 @@ WASensai/
 
 </details>
 
-## 📌 Repository Notes
+## Repository Notes
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
@@ -739,10 +739,10 @@ WASensai/
 
 </details>
 
-## 📣 Internal Use Disclaimer
+## Internal Use Disclaimer
 
 <details>
-<summary><strong>Click to expand this section</strong></summary>
+<summary><strong>Open section</strong></summary>
 
 <br>
 
