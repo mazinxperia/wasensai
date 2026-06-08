@@ -14,6 +14,25 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Local secrets and signing material
+.env
+.env.*
+!.env.example
 keystore.properties
 *.jks
 *.keystore
+*.p12
+*.pem
+*.key
+
+# Local exports, databases, and release artifacts
+*.waview
+*.db
+*.sqlite
+*.sqlite3
+*.apk
+*.aab
+*.zip
+*.rar
+*.7z

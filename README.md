@@ -21,6 +21,7 @@ Built for high-integrity local extraction, packaging, and offline viewing of rea
 - [How `.waview` Storage Works](#how-waview-storage-works)
 - [Example Extracted Data Structure](#example-extracted-data-structure)
 - [How The Viewer Reads Data](#how-the-viewer-reads-data)
+- [Standalone Web Viewer Beta](#standalone-web-viewer-beta)
 - [Architecture Overview](#architecture-overview)
 - [Current App Architecture In Practice](#current-app-architecture-in-practice)
 - [Major Development Setbacks And Fixes](#major-development-setbacks-and-fixes)
@@ -29,6 +30,7 @@ Built for high-integrity local extraction, packaging, and offline viewing of rea
 - [Privacy And Data Handling](#privacy-and-data-handling)
 - [Build And Run Notes](#build-and-run-notes)
 - [Screenshots](#screenshots)
+- [Web Viewer Screenshot](#web-viewer-screenshot)
 - [Project Structure](#project-structure)
 - [Repository Notes](#repository-notes)
 - [Internal Use Disclaimer](#internal-use-disclaimer)
@@ -44,11 +46,14 @@ Built for high-integrity local extraction, packaging, and offline viewing of rea
 | Main validated target | WhatsApp Business |
 | Archive format | `.waview` |
 | App stack | Kotlin, Compose, Hilt, Media3, Zip4j, libsu |
+| Additional viewer | Standalone web viewer beta in `web_viewer/` |
 | Main validated source device | Samsung Galaxy A13 `SM-A137F/DS` |
 | Extra viewer validation | Samsung Galaxy S22 Ultra, Pixel 4 Emulator |
 | Data realism | Real-world WhatsApp Business history, roughly `6-7 months` |
 
 WA Sensai is a rooted Android app built for extracting WhatsApp data from a real device and packaging it into a private `.waview` archive that can later be opened in the app's built-in viewer.
+
+The repository also now includes a separate beta web viewer under `web_viewer/`. That web viewer is intended for urgent standalone PC viewing of existing `.waview` files in a browser. It is not a replacement for the Android app and should not be treated as production-level software yet.
 
 This project was created for internal personal use, with the main focus on data integrity, media recovery, export reliability, and smooth offline viewing of large real-world chat history. The primary validated target was WhatsApp Business, not public multi-device compatibility across every WhatsApp variant.
 
@@ -71,9 +76,12 @@ WA Sensai was built to:
 - package the extracted data into a local `.waview` archive
 - preserve as much message and media integrity as possible
 - open that archive inside an offline in-app viewer
+- provide a separate beta browser viewer for opening `.waview` files on a PC when urgently needed
 - support large real chat history, not only tiny sample datasets
 
 WA Sensai was not originally built as a public consumer product. It was developed for internal use and validated mainly against one real WhatsApp Business environment. Regular WhatsApp fallback logic exists, but regular WhatsApp was not formally validated end-to-end during the main development cycle.
+
+The standalone web viewer was added later as a practical viewer-only tool. It is useful when a `.waview` file needs to be opened from a desktop browser, but it is still considered beta and should be evaluated carefully before relying on it as a production viewer.
 
 </details>
 
@@ -186,6 +194,20 @@ The result is a self-contained `.waview` archive intended for offline viewing la
 The viewer opens an existing `.waview` archive, reads the exported structured data, rebuilds chat lists and timelines, resolves media from the archive, and renders the data in a WhatsApp-style local viewer flow.
 
 The viewer was refactored heavily to handle larger exports more safely and more smoothly.
+
+### 3. Standalone Web Viewing Beta
+
+The repository now includes an additional standalone web viewer in `web_viewer/`.
+
+This web viewer:
+
+- opens existing `.waview` files from a desktop browser
+- reads the archive locally without uploading it to a backend
+- provides a PC-side viewer for urgent archive inspection
+- supports large archive handling with browser-side ZIP indexing and lazy message loading
+- is separate from the Android app and does not perform extraction
+
+The web viewer is currently beta. It was added for urgent practical viewing needs, not as a fully production-hardened replacement for the Android viewer.
 
 </details>
 
@@ -335,6 +357,100 @@ Important loading note:
 - the first archive open can take noticeably longer, because the heavy work is intentionally front-loaded at the beginning
 - this is by design: archive sync, indexing, preload work, and initial render preparation are done early so later chat navigation feels smoother
 - in short, first load is heavier so chat browsing after that can be faster and more stable
+
+</details>
+
+## Standalone Web Viewer Beta
+
+<details>
+<summary><strong>Open section</strong></summary>
+
+<br>
+
+WA Sensai now includes a separate standalone browser viewer in:
+
+```text
+web_viewer/
+```
+
+This web viewer was added for urgent `.waview` viewing from a PC. It is useful when an exported `.waview` archive needs to be opened outside the Android app, directly from a desktop browser.
+
+Important status:
+
+- the web viewer is currently beta
+- it is viewer-only
+- it is not production-level ready
+- it is not a replacement for the Android extractor or Android in-app viewer
+- it was created mainly to make `.waview` files readable on PC as a standalone local tool
+
+### What The Web Viewer Does
+
+The web viewer can:
+
+- open a local `.waview` file from the browser file picker
+- read the archive without uploading it to a backend
+- index ZIP / ZIP64 archive metadata in the browser
+- validate the WA Sensai archive format
+- display chats, groups, calls, media references, reactions, polls, and archive metadata
+- load avatars and media only when needed
+- handle large archives with a lazy message-loading path
+- run through Docker as a static web app served by nginx
+
+### What The Web Viewer Does Not Do
+
+The web viewer does not:
+
+- extract WhatsApp data
+- require root
+- create `.waview` files
+- modify `.waview` files
+- upload archives to Docker, nginx, or a server
+- guarantee production-level compatibility across every archive shape yet
+
+### Web Viewer Technical Notes
+
+The web viewer is built with:
+
+- React
+- TypeScript
+- Vite
+- Tailwind CSS
+- Web Worker archive parsing
+- custom ZIP / ZIP64 central-directory reading
+- browser `File.slice()` media access
+- lazy large-archive message parsing
+- Docker + nginx static serving
+
+The browser receives a local file handle when the user selects a `.waview` file. The selected archive stays on the local machine. The web app reads the ZIP central directory, `meta/version.json`, `data.json`, avatars, and media slices directly through browser file APIs.
+
+For large archives, the web viewer avoids parsing the full message list during startup. It first opens the archive with chat/media/call/contact metadata, then parses messages when a chat is opened. This was added because very large `.waview` files can contain hundreds of thousands of messages and very large `data.json` payloads.
+
+### Running The Web Viewer
+
+From the `web_viewer/` folder:
+
+```bash
+npm install
+npm run dev
+```
+
+Or through Docker:
+
+```bash
+docker compose up --build
+```
+
+Then open:
+
+```text
+http://localhost:8088
+```
+
+For full web-viewer-specific documentation, see:
+
+```text
+web_viewer/README.md
+```
 
 </details>
 
@@ -624,6 +740,20 @@ Important note:
 - those edited screenshots were also visually pushed more toward a GTA San Andreas style vibe
 - the edited screenshots are the chat list screen and the chat window screen
 
+## Web Viewer Screenshot
+
+Standalone web viewer beta:
+
+<p align="center">
+  <img src="./screenshots/web_viewer.png" alt="WA Sensai standalone web viewer beta" width="780" />
+</p>
+
+Important note:
+
+- this screenshot shows the separate browser-based web viewer
+- the web viewer is intended for local PC viewing of existing `.waview` files
+- it is currently beta and should not be treated as the production Android viewer
+
 ## Project Structure
 
 <details>
@@ -715,6 +845,20 @@ WASensai/
 │   ├── src/main/res/                 # Drawables, fonts, launcher assets, XML config
 │   └── src/main/AndroidManifest.xml  # App manifest, permissions, intents, provider
 ├── gradle/                           # Gradle version catalog and wrapper support files
+├── web_viewer/                        # Standalone beta browser viewer for `.waview` archives
+│   ├── Dockerfile                     # Web viewer production container build
+│   ├── docker-compose.yml             # Local nginx web viewer service on port 8088
+│   ├── nginx.conf                     # Static web viewer serving config
+│   ├── package.json                   # Web viewer scripts and dependencies
+│   ├── public/                        # Web viewer public assets and chat wallpapers
+│   └── src/
+│       ├── components/                # Web viewer React UI components
+│       ├── context/                   # Web viewer theme context
+│       ├── hooks/                     # Worker controller hook
+│       ├── lib/                       # ZIP reader and formatting helpers
+│       ├── types/                     # `.waview` and worker TypeScript contracts
+│       └── workers/                   # Browser worker archive parser
+├── screenshots/                       # README screenshots, including web viewer screenshot
 ├── build.gradle.kts                  # Root Gradle config
 ├── settings.gradle.kts               # Module inclusion and repository setup
 ├── gradle.properties                 # Gradle runtime options
@@ -734,8 +878,10 @@ WASensai/
 
 - The repository currently includes internal handoff documentation used during development.
 - The public-facing README is intentionally privacy-safe.
+- The `web_viewer/` folder is a separate beta standalone browser viewer, not part of the rooted Android extraction runtime.
 - If this project is uploaded publicly, review every document and asset before publishing.
 - Consider whether internal handoff files should remain in the public repository.
+- Review the web viewer separately before treating it as production-ready.
 
 </details>
 
@@ -748,5 +894,7 @@ WASensai/
 
 
 WA Sensai was built around a real personal workflow and a real rooted Android device environment. The app worked well in that validated internal use case, but broad public compatibility across all devices, all Android variants, and all WhatsApp package variations should not be assumed without further testing.
+
+The standalone web viewer was added later as a practical beta tool for opening `.waview` files on PC. It is useful for local urgent viewing, but it should not be described as production-level ready yet.
 
 </details>

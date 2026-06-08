@@ -1,0 +1,10 @@
+services:
+  wasensai-web-viewer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wasensai-web-viewer:local
+    container_name: wasensai-web-viewer
+    ports:
+      - "8088:80"
+    restart: unless-stopped
