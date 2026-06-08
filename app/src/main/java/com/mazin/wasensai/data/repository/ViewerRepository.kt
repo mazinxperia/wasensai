@@ -2,6 +2,8 @@ package com.mazin.wasensai.data.repository
 
 import android.content.Context
 import android.net.Uri
+import android.util.JsonReader
+import android.util.JsonToken
 import com.mazin.wasensai.data.model.*
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -19,9 +21,20 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonPrimitive
 import net.lingala.zip4j.ZipFile
 import net.lingala.zip4j.model.FileHeader
 import java.io.File
+import java.io.InputStream
+import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -112,6 +125,7 @@ class ViewerRepository @Inject constructor(
     var currentWaViewFile: WaViewFile? = null
         private set
     private var currentZipFile: ZipFile? = null
+    private var messageStore: ViewerMessageStore? = null
 
     // ─── Zip index ────────────────────────────────────────────────────────────
     // zipPathIndex:  lowercase zip path → FileHeader
@@ -129,6 +143,10 @@ class ViewerRepository @Inject constructor(
 
     // ─── Runtime data ─────────────────────────────────────────────────────────
     private val messagesByChatId = ConcurrentHashMap<Long, List<Message>>(512)
+    private val chatMessageStats = ConcurrentHashMap<Long, ViewerChatStats>(512)
+    private val reactionsByMessageId = ConcurrentHashMap<Long, MutableList<Reaction>>(2048)
+    private val pollsByMessageId = ConcurrentHashMap<Long, Poll>(256)
+    private val starredMessageIds = LinkedHashSet<Long>()
     // keyIdIndex: keyId → Message (for reply-scroll lookups, built per-chat)
     val avatarCache  = ConcurrentHashMap<String, File>(512)
     val mediaCache   = ConcurrentHashMap<Long, File>(2048)
@@ -155,6 +173,7 @@ class ViewerRepository @Inject constructor(
     @Volatile private var logSnapshot: List<String> = emptyList()
     private var phase2Job: Job? = null
     @Volatile private var currentLogSummary = SyncLogSummary()
+    @Volatile private var currentImportStats = ViewerImportStats()
     @Volatile private var allMessagesCache: List<Message> = emptyList()
     @Volatile private var starredMessagesCache: List<Message> = emptyList()
 
@@ -163,6 +182,18 @@ class ViewerRepository @Inject constructor(
     private val junkPathSegments = setOf(".shared/","backups/","databases/",".stickerthumbs/",".trash/",".thumbs/",".wamocache/",".statuses/",".links/")
     private val junkExtensions   = setOf(".tmp",".chk",".enc",".thumb",".log",".crypt14",".chck",".bak")
     private val junkFileNames    = setOf(".nomedia","media.zip","future_media.json")
+
+    private data class ViewerImportStats(
+        val totalMessages: Int = 0,
+        val textMessages: Int = 0,
+        val mediaMessages: Int = 0,
+        val locationMessages: Int = 0,
+        val deletedMessages: Int = 0,
+        val deletedForEveryoneMessages: Int = 0,
+        val systemMessages: Int = 0,
+        val forwardedMessages: Int = 0,
+        val broadcastMessages: Int = 0
+    )
 
     // ─── PHASE 1 ─────────────────────────────────────────────────────────────
 
@@ -225,47 +256,16 @@ class ViewerRepository @Inject constructor(
             val dataHeader = zipPathIndex["data.json"]
                 ?: zipFile.fileHeaders.firstOrNull { it.fileName.equals("data.json", true) }
                 ?: error("Invalid .waview: missing data.json")
-            val extractDir = File(tempDir, "extracted").also { it.mkdirs() }
-            emitSync(step = "Parsing archive data...")
-            zipFile.extractFile(dataHeader, extractDir.absolutePath)
-            val waView = json.decodeFromString<WaViewFile>(File(extractDir, "data.json").readText())
+            emitSync(step = "Importing archive data...")
+            val waView = importArchiveData(zipFile, dataHeader)
             currentWaViewFile = waView
 
             // ── Build mediaEntryMap ──────────────────────────────────────────
             waView.mediaIndex.forEach { entry ->
-                mediaEntryMap[entry.messageId] = normalizeMediaEntry(entry)
+                mediaEntryMap[entry.messageId] = entry
             }
-
-            // ── Enrich messages (populate @Transient fields from related lists) ──
-            val reactionsMap = waView.reactions.groupBy { it.messageId }
-            val pollsMap     = waView.polls.associateBy { it.messageId }
-            val enrichedMessages = waView.messages.map { msg ->
-                val media    = mediaEntryMap[msg.id]
-                val poll     = pollsMap[msg.id]
-                msg.copy(
-                    mediaFilePath = media?.relativePath ?: "",
-                    mediaMimeType = media?.mimeType     ?: "",
-                    mediaCaption  = media?.caption      ?: "",
-                    mediaName     = media?.fileName     ?: "",
-                    mediaSize     = media?.size         ?: 0L,
-                    reactions     = reactionsMap[msg.id] ?: emptyList(),
-                    pollQuestion  = poll?.question ?: "",
-                    pollOptions   = poll?.options?.map { PollOption(it.optionName, it.voteTotal) } ?: emptyList()
-                )
-            }
-
-            // ── Index messages by chatId ─────────────────────────────────────
-            val byChat = mutableMapOf<Long, MutableList<Message>>()
-            for (msg in enrichedMessages) byChat.getOrPut(msg.chatId) { mutableListOf() }.add(msg)
-            byChat.forEach { (chatId, list) ->
-                list.sortBy { it.timestamp }
-                messagesByChatId[chatId] = list
-            }
-            allMessagesCache = byChat.values.asSequence().flatten().toList()
-            val starredIds = waView.starredMessages.toHashSet()
-            starredMessagesCache = allMessagesCache.filter { it.id in starredIds }
             emitSync(step = "Preparing viewer data...")
-            log("[SYNC] Loaded: ${waView.chats.size} chats, ${enrichedMessages.size} messages, ${waView.mediaIndex.size} media entries")
+            log("[SYNC] Loaded: ${waView.chats.size} chats, ${currentImportStats.totalMessages} messages, ${waView.mediaIndex.size} media entries")
             log("[SYNC] Contacts: ${waView.contacts.size} | Groups: ${waView.groups.size} | Reactions: ${waView.reactions.size}")
 
             // ── Sync log: data inventory ─────────────────────────────────────
@@ -286,11 +286,296 @@ class ViewerRepository @Inject constructor(
         }
     }
 
+    private suspend fun importArchiveData(zipFile: ZipFile, dataHeader: FileHeader): WaViewFile {
+        val store = ViewerMessageStore(context, json).also {
+            it.reset()
+            messageStore = it
+        }
+
+        mediaEntryMap.clear()
+        chatMessageStats.clear()
+        reactionsByMessageId.clear()
+        pollsByMessageId.clear()
+        starredMessageIds.clear()
+        messagesByChatId.clear()
+        starredMessagesCache = emptyList()
+        allMessagesCache = emptyList()
+        currentImportStats = ViewerImportStats()
+
+        var exportInfo = ExportInfo()
+        val chats = mutableListOf<Chat>()
+        val contacts = mutableListOf<Contact>()
+        val groups = mutableListOf<Group>()
+        val reactions = mutableListOf<Reaction>()
+        val polls = mutableListOf<Poll>()
+        val mediaIndex = mutableListOf<MediaEntry>()
+        val callLogs = mutableListOf<CallLog>()
+        val labels = mutableListOf<Label>()
+        val labeledMessages = mutableListOf<LabeledMessage>()
+        val mentions = mutableListOf<Mention>()
+        val vcards = mutableListOf<VCard>()
+        val statuses = mutableListOf<StatusUpdate>()
+        val messageEdits = mutableListOf<MessageEdit>()
+
+        log("Streaming data.json into local viewer store...")
+        store.beginBulkImport()
+        try {
+            zipReadMutex.withLock {
+                zipFile.getInputStream(dataHeader).use { input ->
+                    JsonReader(InputStreamReader(input, Charsets.UTF_8)).use { reader ->
+                        reader.isLenient = true
+                        reader.beginObject()
+                        while (reader.hasNext()) {
+                            when (reader.nextName()) {
+                            "export_info" -> {
+                                exportInfo = decodeElement(reader)
+                                emitSync(step = "Reading archive header...")
+                            }
+                            "chats" -> {
+                                log("Reading chats...")
+                                reader.beginArray()
+                                var count = 0
+                                while (reader.hasNext()) {
+                                    chats += decodeElement<Chat>(reader)
+                                    count++
+                                    if (count % 2000 == 0) {
+                                        emitSync(step = "Reading chats...", progress = count, total = exportInfo.totalChats.coerceAtLeast(count))
+                                    }
+                                }
+                                reader.endArray()
+                                log("Chats imported: $count")
+                            }
+                            "contacts" -> {
+                                log("Reading contacts...")
+                                reader.beginArray()
+                                while (reader.hasNext()) contacts += decodeElement<Contact>(reader)
+                                reader.endArray()
+                                log("Contacts imported: ${contacts.size}")
+                            }
+                            "groups" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) groups += decodeElement<Group>(reader)
+                                reader.endArray()
+                            }
+                            "messages" -> {
+                                log("Importing messages into local viewer database...")
+                                emitSync(step = "Importing messages...", progress = 0, total = exportInfo.totalMessages)
+                                reader.beginArray()
+                                var count = 0
+                                while (reader.hasNext()) {
+                                    val element = readJsonElement(reader)
+                                    val message = json.decodeFromJsonElement<Message>(element)
+                                    store.insertMessage(
+                                        message = message,
+                                        rawJson = element.toString(),
+                                        baseSearchText = buildBaseSearchText(message)
+                                    )
+                                    updateImportStats(message)
+                                    val stats = chatMessageStats.getOrPut(message.chatId) { ViewerChatStats() }
+                                    stats.messageCount++
+                                    if (isVisibleChatMessage(message)) stats.visibleMessageCount++
+                                    stats.lastFromMe = message.fromMe
+                                    count++
+                                    if (count % 5000 == 0 || count == exportInfo.totalMessages) {
+                                        log("Imported messages: $count/${exportInfo.totalMessages}")
+                                        emitSync(step = "Importing messages...", progress = count, total = exportInfo.totalMessages)
+                                    }
+                                }
+                                reader.endArray()
+                                log("Messages imported: $count")
+                            }
+                            "reactions" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) {
+                                    val reaction = decodeElement<Reaction>(reader)
+                                    reactions += reaction
+                                    reactionsByMessageId.getOrPut(reaction.messageId) { mutableListOf() }.add(reaction)
+                                }
+                                reader.endArray()
+                            }
+                            "polls" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) {
+                                    val poll = decodeElement<Poll>(reader)
+                                    polls += poll
+                                    pollsByMessageId[poll.messageId] = poll
+                                }
+                                reader.endArray()
+                            }
+                            "media_index" -> {
+                                log("Reading media index...")
+                                reader.beginArray()
+                                var count = 0
+                                while (reader.hasNext()) {
+                                    val entry = normalizeMediaEntry(decodeElement<MediaEntry>(reader))
+                                    mediaIndex += entry
+                                    mediaEntryMap[entry.messageId] = entry
+                                    store.appendMediaSearchText(entry.messageId, entry.fileName, entry.caption)
+                                    count++
+                                    if (count % 5000 == 0 || count == exportInfo.totalMedia) {
+                                        emitSync(step = "Reading media index...", progress = count, total = exportInfo.totalMedia.coerceAtLeast(count))
+                                    }
+                                }
+                                reader.endArray()
+                                log("Media index imported: $count")
+                            }
+                            "call_logs" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) callLogs += decodeElement<CallLog>(reader)
+                                reader.endArray()
+                            }
+                            "labels" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) labels += decodeElement<Label>(reader)
+                                reader.endArray()
+                            }
+                            "labeled_messages" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) labeledMessages += decodeElement<LabeledMessage>(reader)
+                                reader.endArray()
+                            }
+                            "mentions" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) mentions += decodeElement<Mention>(reader)
+                                reader.endArray()
+                            }
+                            "vcards" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) vcards += decodeElement<VCard>(reader)
+                                reader.endArray()
+                            }
+                            "statuses" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) statuses += decodeElement<StatusUpdate>(reader)
+                                reader.endArray()
+                            }
+                            "message_edits" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) messageEdits += decodeElement<MessageEdit>(reader)
+                                reader.endArray()
+                            }
+                            "starred_messages" -> {
+                                reader.beginArray()
+                                while (reader.hasNext()) starredMessageIds += reader.nextLong()
+                                reader.endArray()
+                            }
+                                else -> reader.skipValue()
+                            }
+                        }
+                        reader.endObject()
+                    }
+                }
+            }
+            store.markBulkImportSuccessful()
+        } finally {
+            store.endBulkImport()
+        }
+
+        return WaViewFile(
+            exportInfo = exportInfo,
+            chats = chats,
+            contacts = contacts,
+            groups = groups,
+            messages = emptyList(),
+            reactions = reactions,
+            polls = polls,
+            mediaIndex = mediaIndex,
+            callLogs = callLogs,
+            labels = labels,
+            labeledMessages = labeledMessages,
+            mentions = mentions,
+            vcards = vcards,
+            statuses = statuses,
+            messageEdits = messageEdits,
+            starredMessages = starredMessageIds.toList()
+        )
+    }
+
+    private inline fun <reified T> decodeElement(reader: JsonReader): T =
+        json.decodeFromJsonElement<T>(readJsonElement(reader))
+
+    private fun readJsonElement(reader: JsonReader): JsonElement = when (reader.peek()) {
+        JsonToken.BEGIN_OBJECT -> buildJsonObject {
+            reader.beginObject()
+            while (reader.hasNext()) {
+                put(reader.nextName(), readJsonElement(reader))
+            }
+            reader.endObject()
+        }
+        JsonToken.BEGIN_ARRAY -> buildJsonArray {
+            reader.beginArray()
+            while (reader.hasNext()) {
+                add(readJsonElement(reader))
+            }
+            reader.endArray()
+        }
+        JsonToken.STRING -> JsonPrimitive(reader.nextString())
+        JsonToken.NUMBER -> {
+            val raw = reader.nextString()
+            raw.toLongOrNull()?.let(::JsonPrimitive)
+                ?: raw.toDoubleOrNull()?.let(::JsonPrimitive)
+                ?: JsonPrimitive(raw)
+        }
+        JsonToken.BOOLEAN -> JsonPrimitive(reader.nextBoolean())
+        JsonToken.NULL -> {
+            reader.nextNull()
+            JsonNull
+        }
+        else -> error("Unsupported JSON token: ${reader.peek()}")
+    }
+
+    private fun buildBaseSearchText(message: Message): String =
+        listOf(message.textData, message.senderName, message.mediaCaption, message.mediaName)
+            .joinToString(" ")
+            .trim()
+            .lowercase()
+
+    private fun updateImportStats(message: Message) {
+        currentImportStats = currentImportStats.copy(
+            totalMessages = currentImportStats.totalMessages + 1,
+            textMessages = currentImportStats.textMessages + if (message.messageType == 0) 1 else 0,
+            mediaMessages = currentImportStats.mediaMessages + if (message.messageType in listOf(1, 2, 3, 9, 13, 20)) 1 else 0,
+            locationMessages = currentImportStats.locationMessages + if (message.messageType == 5) 1 else 0,
+            deletedMessages = currentImportStats.deletedMessages + if (message.isDeleted) 1 else 0,
+            deletedForEveryoneMessages = currentImportStats.deletedForEveryoneMessages + if (message.deletedForEveryone) 1 else 0,
+            systemMessages = currentImportStats.systemMessages + if (message.isSystem) 1 else 0,
+            forwardedMessages = currentImportStats.forwardedMessages + if (message.isForwarded) 1 else 0,
+            broadcastMessages = currentImportStats.broadcastMessages + if (message.broadcast != 0) 1 else 0
+        )
+    }
+
+    private fun isVisibleChatMessage(message: Message): Boolean =
+        message.messageType != 11 && !(message.isSystem && message.textData.isEmpty())
+
+    private fun enrichMessage(message: Message): Message {
+        val media = mediaEntryMap[message.id]
+        val poll = pollsByMessageId[message.id]
+        val reactions = reactionsByMessageId[message.id].orEmpty()
+        return message.copy(
+            mediaFilePath = media?.relativePath ?: "",
+            mediaMimeType = media?.mimeType ?: "",
+            mediaCaption = media?.caption ?: "",
+            mediaName = media?.fileName ?: "",
+            mediaSize = media?.size ?: 0L,
+            reactions = reactions,
+            pollQuestion = poll?.question ?: "",
+            pollOptions = poll?.options?.map { PollOption(it.optionName, it.voteTotal) } ?: emptyList()
+        )
+    }
+
     // ─── PHASE 2 — background media resolution ────────────────────────────────
 
     private suspend fun runPhase2(waView: WaViewFile) {
         log("[SYNC] Phase 2: resolving media paths from mediaIndex...")
-        val mediaMessages = allMessagesCache.filter { it.mediaFilePath.isNotEmpty() }
+        val mediaMessages = mediaEntryMap.values
+            .filter { it.relativePath.isNotEmpty() }
+            .map { entry ->
+                Message(
+                    id = entry.messageId,
+                    mediaFilePath = entry.relativePath,
+                    mediaMimeType = entry.mimeType
+                )
+            }
         val total = mediaMessages.size
         emitSync(isSyncing = true, step = "Resolving media...", progress = 0, total = total)
 
@@ -392,7 +677,7 @@ class ViewerRepository @Inject constructor(
         }
 
         if (chatReadySet[chatId] == true) {
-            val messages = messagesByChatId[chatId] ?: emptyList()
+            val messages = getMediaMessages(chatId)
             val ids = messages.map { it.id }.toSet()
             // Verify cache is actually complete — count resolvable files missing from cache
             val missingCount = messages.count { msg ->
@@ -410,8 +695,7 @@ class ViewerRepository @Inject constructor(
         }
         queueMutex.withLock { if (!highPriorityQueue.contains(chatId)) highPriorityQueue.addFirst(chatId) }
 
-        val messages      = messagesByChatId[chatId] ?: emptyList()
-        val mediaMessages = messages.filter { it.mediaFilePath.isNotEmpty() }
+        val mediaMessages = getMediaMessages(chatId)
         if (mediaMessages.isEmpty()) {
             queueMutex.withLock { highPriorityQueue.remove(chatId) }
             chatReadySet[chatId] = true
@@ -482,7 +766,7 @@ class ViewerRepository @Inject constructor(
             if (it.isGroup) it.subject.ifEmpty { "Group" } else it.jid.substringBefore("@")
         } ?: "Chat $chatId"
         log("[CACHE] $chatName — cached: ${extracted.get()}${if (failed.get() > 0) ", failed: ${failed.get()}" else ""}")
-        val ids = messages.map { it.id }.toSet()
+        val ids = mediaMessages.map { it.id }.toSet()
         mediaCache.filterKeys { it in ids }
     }
 
@@ -846,7 +1130,6 @@ class ViewerRepository @Inject constructor(
     // ─── DATA INVENTORY LOG ───────────────────────────────────────────────────
 
     private fun logDataInventory(waView: WaViewFile) {
-        val m  = waView.messages
         val mi = mediaEntryMap.values.toList()
 
         // ── Smart media categorization ────────────────────────────────────────
@@ -876,7 +1159,7 @@ class ViewerRepository @Inject constructor(
 
         // ── Store in summary for UI ───────────────────────────────────────────
         currentLogSummary = SyncLogSummary(
-            messagesLoaded       = m.size,
+            messagesLoaded       = currentImportStats.totalMessages,
             chatsLoaded          = waView.chats.size,
             contactsLoaded       = waView.contacts.size,
             groupsLoaded         = waView.groups.size,
@@ -891,15 +1174,15 @@ class ViewerRepository @Inject constructor(
 
         // ── Write to log buffer ───────────────────────────────────────────────
         log("[INFO] ─── DATA INVENTORY ─────────────────────────────")
-        log("[INFO] Messages:        ${m.size}")
-        log("[INFO]   Text:          ${m.count { it.messageType == 0 }}")
-        log("[INFO]   Media:         ${m.count { it.messageType in listOf(1,2,3,9,13,20) }}")
-        log("[INFO]   Location:      ${m.count { it.messageType == 5 }}")
-        log("[INFO]   Deleted:       ${m.count { it.isDeleted }} (${m.count { it.deletedForEveryone }} deleted for everyone)")
-        log("[INFO]   System events: ${m.count { it.isSystem }}")
-        log("[INFO]   Forwarded:     ${m.count { it.isForwarded }}")
+        log("[INFO] Messages:        ${currentImportStats.totalMessages}")
+        log("[INFO]   Text:          ${currentImportStats.textMessages}")
+        log("[INFO]   Media:         ${currentImportStats.mediaMessages}")
+        log("[INFO]   Location:      ${currentImportStats.locationMessages}")
+        log("[INFO]   Deleted:       ${currentImportStats.deletedMessages} (${currentImportStats.deletedForEveryoneMessages} deleted for everyone)")
+        log("[INFO]   System events: ${currentImportStats.systemMessages}")
+        log("[INFO]   Forwarded:     ${currentImportStats.forwardedMessages}")
         log("[INFO]   Starred:       ${waView.starredMessages.size}")
-        log("[INFO]   Broadcast:     ${m.count { it.broadcast != 0 }}")
+        log("[INFO]   Broadcast:     ${currentImportStats.broadcastMessages}")
         log("[INFO] Chats:           ${waView.chats.size} (${waView.chats.count { it.isGroup }} groups, ${waView.chats.count { !it.isGroup }} individuals)")
         log("[INFO]   Pinned:        ${waView.chats.count { it.pinned }}")
         log("[INFO]   Archived:      ${waView.chats.count { it.archived }}")
@@ -975,28 +1258,68 @@ class ViewerRepository @Inject constructor(
 
     // ─── DATA ACCESS ──────────────────────────────────────────────────────────
 
-    fun getMessagesByChatId(chatId: Long): List<Message> = messagesByChatId[chatId] ?: emptyList()
+    fun getMessagesByChatId(chatId: Long): List<Message> {
+        messagesByChatId[chatId]?.let { return it }
+        val store = messageStore ?: return emptyList()
+        val loaded = store.getAllMessagesByChatId(chatId).map(::enrichMessage)
+        messagesByChatId[chatId] = loaded
+        return loaded
+    }
+
+    fun getRecentMessagesByChatId(chatId: Long, limit: Int): List<Message> {
+        val cached = messagesByChatId[chatId]
+        if (cached != null) {
+            return if (cached.size <= limit) cached else cached.subList(cached.size - limit, cached.size)
+        }
+        val store = messageStore ?: return emptyList()
+        return store.getRecentMessagesByChatId(chatId, limit).map(::enrichMessage)
+    }
+
+    fun getMessagesByKeyIds(chatId: Long, keyIds: Collection<String>): Map<String, Message> {
+        if (keyIds.isEmpty()) return emptyMap()
+        val cached = messagesByChatId[chatId]
+        if (cached != null) {
+            return cached
+                .asSequence()
+                .filter { it.keyId.isNotEmpty() && it.keyId in keyIds }
+                .associateBy { it.keyId }
+        }
+        val store = messageStore ?: return emptyMap()
+        return store.getMessagesByKeyIds(chatId, keyIds).mapValues { (_, message) -> enrichMessage(message) }
+    }
+
+    fun getChatMessageCount(chatId: Long): Int = chatMessageStats[chatId]?.messageCount ?: 0
+
+    fun hasVisibleMessages(chatId: Long): Boolean = (chatMessageStats[chatId]?.visibleMessageCount ?: 0) > 0
+
+    fun wasLastMessageFromMe(chatId: Long): Boolean = (chatMessageStats[chatId]?.lastFromMe ?: 0) == 1
 
     fun getMediaEntry(messageId: Long): MediaEntry? = mediaEntryMap[messageId]
 
     fun getMediaFailureReason(messageId: Long): MediaFailureReason? = mediaFailureReasons[messageId]
 
-    fun getStarredMessages(): List<Message> = starredMessagesCache
+    fun getStarredMessages(): List<Message> {
+        if (starredMessagesCache.isNotEmpty()) return starredMessagesCache
+        val store = messageStore ?: return emptyList()
+        return store.getStarredMessages(starredMessageIds).map(::enrichMessage).also {
+            starredMessagesCache = it
+        }
+    }
 
-    fun getMediaMessages(chatId: Long): List<Message> =
-        getMessagesByChatId(chatId).filter { it.messageType in listOf(1, 2, 3, 9, 13, 20) && it.mediaFilePath.isNotEmpty() }
+    fun getMediaMessages(chatId: Long): List<Message> {
+        val cached = messagesByChatId[chatId]
+        if (cached != null) {
+            return cached.filter { it.messageType in listOf(1, 2, 3, 9, 13, 20) && it.mediaFilePath.isNotEmpty() }
+        }
+        val store = messageStore ?: return emptyList()
+        return store.getMediaMessagesByChatId(chatId)
+            .map(::enrichMessage)
+            .filter { it.mediaFilePath.isNotEmpty() }
+    }
 
     suspend fun searchMessages(query: String): List<Message> = withContext(Dispatchers.Default) {
         if (query.isBlank()) emptyList()
-        else {
-            val q = query.lowercase()
-            allMessagesCache.filter {
-                it.textData.lowercase().contains(q) ||
-                    it.mediaCaption.lowercase().contains(q) ||
-                    it.mediaName.lowercase().contains(q) ||
-                    it.senderName.lowercase().contains(q)
-            }
-        }
+        else (messageStore?.searchMessages(query, 300) ?: emptyList()).map(::enrichMessage)
     }
 
     suspend fun searchChats(query: String): List<Chat> = withContext(Dispatchers.Default) {
@@ -1034,9 +1357,12 @@ class ViewerRepository @Inject constructor(
     fun clear() {
         phase2Job?.cancel(); phase2Job = null
         try { currentZipFile?.close() } catch (_: Exception) {}
+        try { messageStore?.close() } catch (_: Exception) {}
         currentZipFile = null; currentWaViewFile = null
+        messageStore = null
         zipPathIndex.clear(); fileNameIndex.clear()
         mediaEntryMap.clear(); messageMediaIndex.clear(); deletedMediaSet.clear()
+        chatMessageStats.clear(); reactionsByMessageId.clear(); pollsByMessageId.clear(); starredMessageIds.clear()
         messagesByChatId.clear(); avatarCache.clear(); mediaCache.clear(); mediaFailureReasons.clear()
         allMessagesCache = emptyList()
         starredMessagesCache = emptyList()
@@ -1044,6 +1370,7 @@ class ViewerRepository @Inject constructor(
         synchronized(logBuffer) { logBuffer.clear() }
         logSnapshot = emptyList()
         currentLogSummary = SyncLogSummary()
+        currentImportStats = ViewerImportStats()
         _syncState.value = SyncState()
         importWorkDir.deleteRecursively()
         mediaCacheDir.deleteRecursively()
@@ -1051,5 +1378,6 @@ class ViewerRepository @Inject constructor(
         File(context.cacheDir, "waview_import").deleteRecursively()
         File(context.cacheDir, "wa_media").deleteRecursively()
         File(context.cacheDir, "wa_avatars").deleteRecursively()
+        context.deleteDatabase("waview_viewer_messages.db")
     }
 }

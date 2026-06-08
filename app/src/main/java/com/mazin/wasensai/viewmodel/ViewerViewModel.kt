@@ -77,7 +77,6 @@ private fun normalizeContactKey(jid: String): String =
     jid.trim().substringBefore("@").lowercase()
 
 private data class PreparedChatWindow(
-    val allMessages: List<Message>,
     val visibleMessages: List<Message>,
     val keyedMessages: Map<String, Message>
 )
@@ -296,7 +295,7 @@ class ViewerViewModel @Inject constructor(
 
     private fun buildChatListUiModel(
         chat: Chat,
-        lastMessage: Message?
+        isLastFromMe: Boolean
     ): ChatListUiModel {
         val displayName = if (chat.isGroup) {
             chat.subject.ifEmpty { "Group" }
@@ -304,7 +303,6 @@ class ViewerViewModel @Inject constructor(
             getContactName(chat.jid)
         }
         val avatarPath = getAvatar(chat.jid)?.absolutePath
-        val isLastFromMe = lastMessage?.fromMe == 1
         val rawPreview = when (chat.lastMessageType) {
             1 -> "\uD83D\uDCF7 Photo"
             2 -> "\uD83C\uDFB5 Audio"
@@ -398,14 +396,12 @@ class ViewerViewModel @Inject constructor(
                     val chatListModels = HashMap<Long, ChatListUiModel>(waView.chats.size)
                     withContext(Dispatchers.Default) {
                         waView.chats.forEach { chat ->
-                            val messages = viewerRepository.getMessagesByChatId(chat.id)
-                            val hasVisibleMessage = messages.any { msg ->
-                                msg.messageType != 11 &&
-                                    !(msg.isSystem && msg.textData.isEmpty() && msg.mediaFilePath.isEmpty())
-                            }
-                            if (!hasVisibleMessage) return@forEach
+                            if (!viewerRepository.hasVisibleMessages(chat.id)) return@forEach
                             visibleChats += chat
-                            chatListModels[chat.id] = buildChatListUiModel(chat, messages.lastOrNull())
+                            chatListModels[chat.id] = buildChatListUiModel(
+                                chat = chat,
+                                isLastFromMe = viewerRepository.wasLastMessageFromMe(chat.id)
+                            )
                         }
                     }
                     _chats.value = visibleChats
@@ -456,16 +452,14 @@ class ViewerViewModel @Inject constructor(
             )
 
             val preparedWindow = withContext(Dispatchers.Default) {
-                val allMessages = viewerRepository.getMessagesByChatId(chatId)
-                val visibleMessages = if (allMessages.size <= currentPageSize) {
-                    allMessages
-                } else {
-                    allMessages.subList(allMessages.size - currentPageSize, allMessages.size)
-                }
+                val visibleMessages = viewerRepository.getRecentMessagesByChatId(chatId, currentPageSize)
+                val quotedTargets = viewerRepository.getMessagesByKeyIds(
+                    chatId = chatId,
+                    keyIds = visibleMessages.mapNotNull { it.quotedKeyId.takeIf(String::isNotEmpty) }
+                )
                 PreparedChatWindow(
-                    allMessages = allMessages,
                     visibleMessages = visibleMessages,
-                    keyedMessages = allMessages.asSequence()
+                    keyedMessages = (visibleMessages + quotedTargets.values).asSequence()
                         .filter { it.keyId.isNotEmpty() }
                         .associateBy({ it.keyId }, { it })
                 )
@@ -553,14 +547,15 @@ class ViewerViewModel @Inject constructor(
         chatId: Long,
         initialPageSize: Int
     ): PreloadedChatPayload {
-        val allMessages = viewerRepository.getMessagesByChatId(chatId)
-        val windowSize = initialPageSize.coerceAtLeast(1)
-        val visibleMessages = if (allMessages.size <= windowSize) {
-            allMessages
-        } else {
-            allMessages.subList(allMessages.size - windowSize, allMessages.size)
-        }
-        val keyedMessages = allMessages.asSequence()
+        val visibleMessages = viewerRepository.getRecentMessagesByChatId(
+            chatId = chatId,
+            limit = initialPageSize.coerceAtLeast(1)
+        )
+        val quotedTargets = viewerRepository.getMessagesByKeyIds(
+            chatId = chatId,
+            keyIds = visibleMessages.mapNotNull { it.quotedKeyId.takeIf(String::isNotEmpty) }
+        )
+        val keyedMessages = (visibleMessages + quotedTargets.values).asSequence()
             .filter { it.keyId.isNotEmpty() }
             .associateBy({ it.keyId }, { it })
         viewerRepository.loadChatMedia(chatId)
@@ -580,13 +575,24 @@ class ViewerViewModel @Inject constructor(
     }
 
     private suspend fun preloadAllChats() {
+        val totalMessages = _exportInfo.value?.totalMessages ?: 0
+        val totalChats = _chats.value.size
+        if (totalMessages > 100_000 || totalChats > 2_000) {
+            _chatPreloadState.value = ChatPreloadState(
+                isRunning = false,
+                completedChats = 0,
+                totalChats = 0,
+                currentLogLine = "Large archive detected — chats will load on demand."
+            )
+            return
+        }
         val chatsToPreload = _chats.value
-        val totalChats = chatsToPreload.size
+        val preloadTotalChats = chatsToPreload.size
         _chatPreloadState.value = ChatPreloadState(
             isRunning = true,
             completedChats = 0,
-            totalChats = totalChats,
-            currentLogLine = if (totalChats > 0) "Preloading chats for instant open..." else "No chats to preload"
+            totalChats = preloadTotalChats,
+            currentLogLine = if (preloadTotalChats > 0) "Preloading chats for instant open..." else "No chats to preload"
         )
         updateLoadingUiForPreload(_chatPreloadState.value)
         preloadedChats.clear()
@@ -604,9 +610,9 @@ class ViewerViewModel @Inject constructor(
             val nextState = ChatPreloadState(
                 isRunning = true,
                 completedChats = index,
-                totalChats = totalChats,
+                totalChats = preloadTotalChats,
                 currentChatName = chatName,
-                currentLogLine = "Preloading $chatName (${index + 1}/$totalChats)"
+                currentLogLine = "Preloading $chatName (${index + 1}/$preloadTotalChats)"
             )
             _chatPreloadState.value = nextState
             updateLoadingUiForPreload(nextState)
@@ -618,8 +624,8 @@ class ViewerViewModel @Inject constructor(
         }
         _chatPreloadState.value = ChatPreloadState(
             isRunning = false,
-            completedChats = totalChats,
-            totalChats = totalChats,
+            completedChats = preloadTotalChats,
+            totalChats = preloadTotalChats,
             currentLogLine = "All chats are ready."
         )
     }
@@ -713,11 +719,11 @@ class ViewerViewModel @Inject constructor(
     fun loadMessages(chatId: Long) {
         openedChatId    = chatId
         currentPageSize = INITIAL_PAGE_SIZE
-        val all = viewerRepository.getMessagesByChatId(chatId)
+        val all = viewerRepository.getRecentMessagesByChatId(chatId, currentPageSize)
         publishCurrentChatState(
             chatId = chatId,
             loadState = _chatLoadState.value,
-            messages = if (all.size <= currentPageSize) all else all.subList(all.size - currentPageSize, all.size),
+            messages = all,
             renderData = _currentChatRenderData.value,
             availabilityByMessageId = _currentChatAvailability.value
         )
@@ -727,11 +733,10 @@ class ViewerViewModel @Inject constructor(
         // Only allowed after chat is fully Ready â€” never during Loading
         if (openedChatId < 0 || _chatLoadState.value !is ChatLoadState.Ready) return
         viewModelScope.launch {
-            val all = viewerRepository.getMessagesByChatId(openedChatId)
-            if (_currentMessages.value.size >= all.size) return@launch
+            val total = viewerRepository.getChatMessageCount(openedChatId)
+            if (_currentMessages.value.size >= total) return@launch
             currentPageSize += PAGE_INCREMENT
-            val nextMessages = if (all.size <= currentPageSize) all
-            else all.subList(all.size - currentPageSize, all.size)
+            val nextMessages = viewerRepository.getRecentMessagesByChatId(openedChatId, currentPageSize)
             val nextRenderData = buildChatRenderDataFor(openedChatId, nextMessages)
             val nextAvailability = buildAvailabilityMap(nextMessages)
             publishCurrentChatState(
@@ -770,6 +775,9 @@ class ViewerViewModel @Inject constructor(
             val all = viewerRepository.getMessagesByChatId(openedChatId)
             if (_currentMessages.value.size < all.size) {
                 currentPageSize = all.size
+                currentChatKeyMap = all.asSequence()
+                    .filter { it.keyId.isNotEmpty() }
+                    .associateBy({ it.keyId }, { it })
                 val nextRenderData = buildChatRenderDataFor(openedChatId, all)
                 val nextAvailability = buildAvailabilityMap(all)
                 publishCurrentChatState(
@@ -826,7 +834,7 @@ class ViewerViewModel @Inject constructor(
 
     // BUG 1: last message "You:" prefix
     fun isLastMessageFromMe(chatId: Long): Boolean =
-        viewerRepository.getMessagesByChatId(chatId).lastOrNull()?.fromMe == 1
+        viewerRepository.wasLastMessageFromMe(chatId)
 
     // BUG 5: group participants
     fun getGroupForChat(chatId: Long): Group? =

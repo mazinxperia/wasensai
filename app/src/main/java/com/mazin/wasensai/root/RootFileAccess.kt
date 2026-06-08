@@ -34,6 +34,13 @@ data class ScanResult(
     val thumbnailsSizeMb: Long = 0
 )
 
+data class MediaSourceInfo(
+    val packageName: String,
+    val sourcePath: String,
+    val topLevelCounts: List<Pair<String, Int>>,
+    val relativePaths: List<String>
+)
+
 @Singleton
 class RootFileAccess @Inject constructor(
     @ApplicationContext private val context: Context
@@ -236,5 +243,58 @@ class RootFileAccess @Inject constructor(
 
         onProgress("No media found in any WhatsApp installation")
         false
+    }
+
+    suspend fun listMediaSource(onProgress: (String) -> Unit = {}): MediaSourceInfo? = withContext(Dispatchers.IO) {
+        val primaryPkg = getWhatsAppPackage()
+        val fallbackPkg = if (primaryPkg == "com.whatsapp.w4b") "com.whatsapp" else "com.whatsapp.w4b"
+        val candidates = listOf(primaryPkg, fallbackPkg)
+
+        for (srcPkg in candidates) {
+            val srcPath = "/sdcard/Android/media/$srcPkg"
+            val check = Shell.cmd("ls \"$srcPath\" 2>/dev/null | wc -l").exec()
+            val entryCount = check.out.firstOrNull()?.trim()?.toIntOrNull() ?: 0
+            if (entryCount == 0) {
+                onProgress("$srcPkg — no media found, trying next...")
+                continue
+            }
+
+            val folderList = Shell.cmd("ls \"$srcPath\" 2>/dev/null").exec()
+            val topLevelCounts = mutableListOf<Pair<String, Int>>()
+            for (line in folderList.out) {
+                val name = line.trim()
+                if (name.isNotEmpty()) {
+                    val countOut = Shell.cmd("find \"$srcPath/$name\" -type f 2>/dev/null | wc -l").exec()
+                    val count = countOut.out.firstOrNull()?.trim()?.toIntOrNull() ?: 0
+                    topLevelCounts += name to count
+                    onProgress("Found: $name/ ($count files)")
+                }
+            }
+
+            val listResult = Shell.cmd("cd \"$srcPath\" && find . -type f 2>/dev/null | sed 's#^\\./##'").exec()
+            if (!listResult.isSuccess) return@withContext null
+            val relativePaths = listResult.out.map { it.trim() }.filter { it.isNotEmpty() }
+            return@withContext MediaSourceInfo(
+                packageName = srcPkg,
+                sourcePath = srcPath,
+                topLevelCounts = topLevelCounts,
+                relativePaths = relativePaths
+            )
+        }
+
+        onProgress("No media found in any WhatsApp installation")
+        null
+    }
+
+    suspend fun copyMediaFileTo(sourcePath: String, relativePath: String, destFile: File): Boolean = withContext(Dispatchers.IO) {
+        destFile.parentFile?.mkdirs()
+        if (destFile.exists()) destFile.delete()
+        val escapedRelativePath = relativePath.replace("\"", "\\\"")
+        val escapedDestPath = destFile.absolutePath.replace("\"", "\\\"")
+        val result = Shell.cmd(
+            "cp -p \"$sourcePath/$escapedRelativePath\" \"$escapedDestPath\"",
+            "chmod 644 \"$escapedDestPath\""
+        ).exec()
+        result.isSuccess && destFile.exists()
     }
 }

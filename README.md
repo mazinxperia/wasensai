@@ -73,6 +73,7 @@ Built for high-integrity local extraction, packaging, and offline viewing of rea
 | --- | --- |
 | Primary purpose | Rooted WhatsApp data extraction + offline local viewer |
 | Main validated target | WhatsApp Business |
+| Regular WhatsApp support | Package/path fallback for `com.whatsapp` is included |
 | Archive format | `.waview` |
 | App stack | Kotlin, Compose, Hilt, Media3, Zip4j, libsu |
 | Additional viewer | Standalone web viewer beta in `web_viewer/` |
@@ -107,6 +108,7 @@ WA Sensai was built to:
 - open that archive inside an offline in-app viewer
 - provide a separate beta browser viewer for opening `.waview` files on a PC when urgently needed
 - support large real chat history, not only tiny sample datasets
+- handle very large message databases without requiring all messages or media to be held in memory at once
 
 WA Sensai was not originally built as a public consumer product. It was developed for internal use and validated mainly against one real WhatsApp Business environment. Regular WhatsApp fallback logic exists, but regular WhatsApp was not formally validated end-to-end during the main development cycle.
 
@@ -253,10 +255,11 @@ At a high level, extraction works like this:
 1. Detect and verify rooted access.
 2. Detect WhatsApp / WhatsApp Business installation.
 3. Copy the required source databases and supporting files into the app's working area.
-4. Parse the copied data into Kotlin models.
-5. Build a structured export object graph.
+4. Read chats, contacts, groups, and metadata from the copied databases.
+5. Stream messages into `data.json` instead of building one giant in-memory message list.
 6. Build media index information and media availability state.
-7. Package everything into a `.waview` archive.
+7. Add media to the archive directly from source paths one file at a time.
+8. Package everything into a `.waview` archive.
 
 Important design goals during extraction:
 
@@ -265,6 +268,8 @@ Important design goals during extraction:
 - preserve message structure and metadata
 - preserve media references even when some files are missing
 - distinguish available, missing, and deleted/unrecoverable media states
+- avoid staging the full media tree in app cache before zipping
+- write the final archive through a `.partial` file in Downloads, then rename it in place after the archive is complete
 
 </details>
 
@@ -296,6 +301,7 @@ Implementation direction used in this project:
 - `.waview` is handled as a zip-based packaged archive
 - archive creation uses `STORE` compression strategy in the current generation path
 - media is indexed instead of treated as an uncontrolled loose-file dump
+- export writes keep the same archive layout while streaming large data and media safely
 - viewer loading relies on archive indexing, media resolution rules, and cache extraction when needed
 
 </details>
@@ -365,27 +371,30 @@ The viewer flow is not just "open zip and show messages". The current app uses a
 
 1. Open the `.waview` archive.
 2. Index the archive contents.
-3. Read and deserialize structured export data into in-memory models.
-4. Build viewer state for chats, contacts, calls, labels, and related entities.
-5. Sync archive metadata and media availability state.
-6. Build precomputed render models for chat lists and chat timelines.
-7. Resolve media lazily and safely when the UI needs it.
+3. Stream `data.json` through `JsonReader`.
+4. Import messages into a local SQLite-backed viewer store.
+5. Build viewer state for chats, contacts, calls, labels, and related entities.
+6. Sync archive metadata and media availability state.
+7. Load recent chat windows and additional messages on demand.
+8. Resolve media lazily and safely when the UI needs it.
 
 Important viewer characteristics in the current codebase:
 
 - zip indexing before heavy viewer usage
+- SQLite-backed message import for large archives
 - guarded media extraction and media validity checks
 - archive read synchronization around zip access
 - chat-level media loading safeguards
+- recent-message window loading instead of full-chat memory loading by default
 - deleted/missing media handling instead of silent crashes
-- preload-heavy viewer strategy for faster later chat opens
+- large archives skip full chat preload and load chats on demand
 - render-model-based chat and chat-list drawing for smoother UI
 
 Important loading note:
 
-- the first archive open can take noticeably longer, because the heavy work is intentionally front-loaded at the beginning
-- this is by design: archive sync, indexing, preload work, and initial render preparation are done early so later chat navigation feels smoother
-- in short, first load is heavier so chat browsing after that can be faster and more stable
+- the first archive open can take noticeably longer, because messages are streamed into the local viewer store
+- this is by design: the app pays the import cost once instead of repeatedly parsing a huge `data.json`
+- for very large archives, chat browsing is intentionally on-demand to protect memory and keep the viewer stable
 
 </details>
 
@@ -567,7 +576,18 @@ This phase focused on the heavy viewer problems seen with real data:
 - memory pressure tuning
 - profiling-backed narrowing of fixed screen mount cost
 
-The current codebase reflects both phases together.
+### Handoff Phase 3: large archive hardening
+
+This phase focused on very large exports and viewer files:
+
+- streaming `data.json` export
+- direct media-to-archive zipping
+- direct Downloads `.partial` output before final rename
+- Android viewer SQLite message store
+- lazy chat message loading for high-volume archives
+- regular WhatsApp package/path fallback hardening
+
+The current codebase reflects all three phases together.
 
 </details>
 
@@ -615,6 +635,7 @@ Fix direction:
 Problem:
 
 - large real chats caused slow opens, jank, and heavy work at the wrong time
+- very large archives could exceed Android heap limits if every message was decoded and cached in memory
 
 Fix direction:
 
@@ -623,9 +644,29 @@ Fix direction:
 - chat-list row model flattening
 - timeline prebuild work
 - preload strategy redesign
+- SQLite-backed message storage
+- recent-message window loading
+- large-archive on-demand chat loading
 - lighter wallpaper/background drawing path
 
-### 4. Loading-state quality
+### 4. Very large export stability
+
+Problem:
+
+- very large `msgstore.db` files can contain hundreds of thousands of messages
+- serializing all messages as one in-memory object graph can hit heap limits
+- copying the full media tree into app cache before zipping can exceed emulator/device storage
+- moving a completed huge archive at the end can fail if storage is tight
+
+Fix direction:
+
+- count and stream messages instead of retaining all messages in memory
+- write `data.json` incrementally
+- scan and filter media without staging the full media tree
+- add selected media into the archive one file at a time
+- write the output archive directly to Downloads as `.waview.partial`, then rename after success
+
+### 5. Loading-state quality
 
 Problem:
 
@@ -637,7 +678,7 @@ Fix direction:
 - current-route chat readiness state
 - staged preparation before full chat rendering
 
-### 5. Theme and system bar handling
+### 6. Theme and system bar handling
 
 Problem:
 
@@ -683,9 +724,19 @@ The later handoff focused on real-world viewer behavior under heavier data:
 - wallpaper/render-cost cleanup
 - smoother chat list and chat open behavior
 
+### Handoff 3: large export and huge viewer hardening
+
+The latest hardening focused on archives large enough to expose memory and storage limits:
+
+- streaming export data
+- direct media zipping
+- direct `.partial` archive output
+- SQLite-backed Android viewer message import
+- on-demand chat windows for huge archives
+
 ### Current State
 
-The current app keeps the stable extractor/archive design from the first major handoff and the smoother viewer behavior introduced in the later performance session.
+The current app keeps the stable extractor/archive design from the first major handoff, the smoother viewer behavior introduced in the later performance session, and the large-archive safety work added after high-volume testing.
 
 </details>
 
@@ -820,6 +871,7 @@ WASensai/
 │   │   │   │   └── VCard.kt                  # Shared contact card model
 │   │   │   └── repository/
 │   │   │       ├── ExtractRepository.kt      # Extraction orchestration and data assembly
+│   │   │       ├── ViewerMessageStore.kt     # SQLite-backed Android viewer message store
 │   │   │       └── ViewerRepository.kt       # Archive open/load/sync/media resolution logic
 │   │   ├── export/
 │   │   │   └── ExportManager.kt              # `.waview` archive packaging writer

@@ -1,6 +1,7 @@
 package com.mazin.wasensai.data.repository
 
 import android.content.Context
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import com.mazin.wasensai.data.model.*
 import com.mazin.wasensai.root.RootFileAccess
@@ -9,9 +10,32 @@ import com.mazin.wasensai.utils.FileUtils
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.BufferedWriter
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+
+data class ExtractSnapshot(
+    val exportInfo: ExportInfo,
+    val chats: List<Chat>,
+    val contacts: List<Contact>,
+    val groups: List<Group>,
+    val reactions: List<Reaction>,
+    val polls: List<Poll>,
+    val mediaIndex: List<MediaEntry>,
+    val callLogs: List<CallLog>,
+    val labels: List<Label>,
+    val labeledMessages: List<LabeledMessage>,
+    val mentions: List<Mention>,
+    val vcards: List<VCard>,
+    val statuses: List<StatusUpdate>,
+    val messageEdits: List<MessageEdit>,
+    val starredMessages: List<Long>
+)
 
 @Singleton
 class ExtractRepository @Inject constructor(
@@ -19,10 +43,11 @@ class ExtractRepository @Inject constructor(
     private val rootFileAccess: RootFileAccess
 ) {
     private fun log(msg: String) = android.util.Log.d("WASensai", "[EXTRACT] $msg")
+    private val exportJson = Json { prettyPrint = true }
 
     // ─── Public entry point ───────────────────────────────────────────────────
 
-    suspend fun extractData(onProgress: (String) -> Unit): WaViewFile =
+    suspend fun collectExportSnapshot(onProgress: (String) -> Unit): ExtractSnapshot =
         withContext(Dispatchers.IO) {
             val cacheDir = FileUtils.getCacheDir(context)
 
@@ -36,9 +61,10 @@ class ExtractRepository @Inject constructor(
             log("Chats: ${chats.size}")
             onProgress("Chats: ${chats.size}")
 
-            onProgress("Reading messages...")
-            val messages = readMessages(cacheDir)
-            log("Messages: ${messages.size}")
+            onProgress("Counting messages...")
+            val totalMessages = countMessages(cacheDir)
+            log("Total messages: $totalMessages")
+            onProgress("Messages: $totalMessages")
 
             onProgress("Reading reactions...")
             val reactions = readReactions(cacheDir)
@@ -51,7 +77,7 @@ class ExtractRepository @Inject constructor(
             onProgress("Polls: ${polls.size}")
 
             onProgress("Reading media metadata...")
-            val mediaIndex = buildMediaIndex(messages)
+            val mediaIndex = buildMediaIndex(cacheDir)
             log("Media index: ${mediaIndex.size} entries")
             onProgress("Media index: ${mediaIndex.size} entries")
 
@@ -91,30 +117,25 @@ class ExtractRepository @Inject constructor(
             onProgress("Message edits: ${messageEdits.size}")
 
             val phoneNumber = extractPhoneNumber(cacheDir)
-            val starred     = messages.filter { it.starred == 1 }.map { it.id }
+            val starred     = readStarredMessageIds(cacheDir)
 
             val mediaCount = mediaIndex.size
-            val textCount  = messages.count { it.messageType == 0 }
-            val delCount   = messages.count { it.isDeleted }
-            val sysCount   = messages.count { it.isSystem }
-            log("Summary: text=$textCount media=$mediaCount deleted=$delCount system=$sysCount")
-            onProgress("Text: $textCount | Media: $mediaCount | Deleted: $delCount | System: $sysCount")
+            log("Summary: messages=$totalMessages media=$mediaCount starred=${starred.size}")
             onProgress("Phone: +$phoneNumber | Starred: ${starred.size}")
 
-            WaViewFile(
+            ExtractSnapshot(
                 exportInfo = ExportInfo(
                     phoneNumber   = phoneNumber,
                     exportDate    = DateUtils.currentIso8601(),
                     appVersion    = "1.0.0",
                     formatVersion = 3,
                     totalChats    = chats.size,
-                    totalMessages = messages.size,
+                    totalMessages = totalMessages,
                     totalMedia    = mediaCount
                 ),
                 chats           = chats,
                 contacts        = contacts,
                 groups          = groups,
-                messages        = messages,
                 reactions       = reactions,
                 polls           = polls,
                 mediaIndex      = mediaIndex,
@@ -128,6 +149,35 @@ class ExtractRepository @Inject constructor(
                 starredMessages = starred
             )
         }
+
+    suspend fun writeDataJson(
+        cacheDir: File,
+        snapshot: ExtractSnapshot,
+        onProgress: (String) -> Unit
+    ): File = withContext(Dispatchers.IO) {
+        val dataJsonFile = File(cacheDir, "data.json")
+        dataJsonFile.bufferedWriter().use { writer ->
+            writer.appendLine("{")
+            writeNamedJsonValue(writer, "export_info", ExportInfo.serializer(), snapshot.exportInfo, trailingComma = true)
+            writeSerializedArrayField(writer, "chats", Chat.serializer(), snapshot.chats, trailingComma = true)
+            writeSerializedArrayField(writer, "contacts", Contact.serializer(), snapshot.contacts, trailingComma = true)
+            writeSerializedArrayField(writer, "groups", Group.serializer(), snapshot.groups, trailingComma = true)
+            writeMessagesArrayField(writer, cacheDir, snapshot.exportInfo.totalMessages, onProgress)
+            writeSerializedArrayField(writer, "reactions", Reaction.serializer(), snapshot.reactions, trailingComma = true)
+            writeSerializedArrayField(writer, "polls", Poll.serializer(), snapshot.polls, trailingComma = true)
+            writeSerializedArrayField(writer, "media_index", MediaEntry.serializer(), snapshot.mediaIndex, trailingComma = true)
+            writeSerializedArrayField(writer, "call_logs", CallLog.serializer(), snapshot.callLogs, trailingComma = true)
+            writeSerializedArrayField(writer, "labels", Label.serializer(), snapshot.labels, trailingComma = true)
+            writeSerializedArrayField(writer, "labeled_messages", LabeledMessage.serializer(), snapshot.labeledMessages, trailingComma = true)
+            writeSerializedArrayField(writer, "mentions", Mention.serializer(), snapshot.mentions, trailingComma = true)
+            writeSerializedArrayField(writer, "vcards", VCard.serializer(), snapshot.vcards, trailingComma = true)
+            writeSerializedArrayField(writer, "statuses", StatusUpdate.serializer(), snapshot.statuses, trailingComma = true)
+            writeSerializedArrayField(writer, "message_edits", MessageEdit.serializer(), snapshot.messageEdits, trailingComma = true)
+            writeSerializedArrayField(writer, "starred_messages", Long.serializer(), snapshot.starredMessages, trailingComma = false)
+            writer.appendLine("}")
+        }
+        dataJsonFile
+    }
 
     // ─── Contacts ─────────────────────────────────────────────────────────────
 
@@ -224,125 +274,165 @@ class ExtractRepository @Inject constructor(
 
     // ─── Messages ─────────────────────────────────────────────────────────────
 
-    private fun readMessages(cacheDir: File): List<Message> {
-        val db = openDb(cacheDir, "msgstore.db") ?: return emptyList()
-        val contactNameMap = buildContactNameMap(cacheDir)
+    private fun countMessages(cacheDir: File): Int {
+        val db = openDb(cacheDir, "msgstore.db") ?: return 0
         return try {
-            // Optional location columns — check to avoid failure on older DB versions
-            val placeNameSql = if (hasColumn(db, "message_location", "place_name")) "COALESCE(loc.place_name, '')" else "''"
-            val placeAddrSql = if (hasColumn(db, "message_location", "address"))    "COALESCE(loc.address, '')"    else "''"
-
-            // Pre-build set of messages deleted for everyone from message_revoked
-            val revokedForAll = buildRevokedSet(db)
-
-            val list = mutableListOf<Message>()
             db.rawQuery("""
-                SELECT
-                    COALESCE(lid_chat.raw_string, jid_chat.raw_string) as chat_jid,
-                    msg._id,
-                    msg.from_me,
-                    msg.timestamp,
-                    COALESCE(msg.received_timestamp, 0),
-                    COALESCE(msg.text_data, ''),
-                    msg.status,
-                    COALESCE(mf_ver.version, 0) as edit_version,
-                    msg.key_id,
-                    COALESCE(msg.starred, 0),
-                    COALESCE(msg.broadcast, 0),
-                    COALESCE(msg.translated_text, ''),
-                    msg.message_type,
-                    msg.sort_id,
-                    msg.chat_row_id,
-                    COALESCE(lid_sender.raw_string, jid_sender.raw_string, '') as sender_jid,
-                    COALESCE(chat.subject, '') as chat_subject,
-                    COALESCE(mq.key_id, '') as quoted_key_id,
-                    COALESCE(mq.from_me, 0) as quoted_from_me,
-                    COALESCE(mq.message_type, 0) as quoted_msg_type,
-                    COALESCE(mq.text_data, '') as quoted_text,
-                    COALESCE(lid_qsender.raw_string, jid_qsender.raw_string, '') as quoted_sender_jid,
-                    COALESCE(loc.latitude, 0.0) as latitude,
-                    COALESCE(loc.longitude, 0.0) as longitude,
-                    COALESCE(sys.action_type, 0) as action_type,
-                    COALESCE(mcl.video_call, 0) as is_video_call,
-                    COALESCE(mfwd.forward_score, 0) as forward_score,
-                    $placeNameSql as place_name,
-                    $placeAddrSql as place_address
+                SELECT COUNT(*)
                 FROM message msg
                 JOIN chat ON chat._id = msg.chat_row_id
                 JOIN jid jid_chat ON jid_chat._id = chat.jid_row_id
                 LEFT JOIN jid_map jm_chat ON chat.jid_row_id = jm_chat.lid_row_id
                 LEFT JOIN jid lid_chat ON jm_chat.jid_row_id = lid_chat._id
-                LEFT JOIN jid jid_sender ON jid_sender._id = msg.sender_jid_row_id
-                LEFT JOIN jid_map jm_sender ON msg.sender_jid_row_id = jm_sender.lid_row_id
-                LEFT JOIN jid lid_sender ON jm_sender.jid_row_id = lid_sender._id
-                LEFT JOIN message_quoted mq ON mq.message_row_id = msg._id
-                LEFT JOIN jid jid_qsender ON jid_qsender._id = mq.sender_jid_row_id
-                LEFT JOIN jid_map jm_qsender ON mq.sender_jid_row_id = jm_qsender.lid_row_id
-                LEFT JOIN jid lid_qsender ON jm_qsender.jid_row_id = lid_qsender._id
-                LEFT JOIN message_location loc ON loc.message_row_id = msg._id
-                LEFT JOIN message_future mf_ver ON mf_ver.message_row_id = msg._id
-                LEFT JOIN message_system sys ON sys.message_row_id = msg._id
-                LEFT JOIN missed_call_logs mcl ON mcl.message_row_id = msg._id
-                LEFT JOIN message_forwarded mfwd ON mfwd.message_row_id = msg._id
                 WHERE COALESCE(lid_chat.raw_string, jid_chat.raw_string) <> '-1'
-                GROUP BY msg._id
-                ORDER BY msg.timestamp ASC
             """.trimIndent(), null).use { c ->
-                while (c.moveToNext()) {
-                    val msgId       = c.getLong(1)
-                    val msgType     = c.getInt(12)
-                    val status      = c.getInt(6)
-                    val editVersion = c.getInt(7)
-                    val fromMe      = c.getInt(2)
-                    val isDeleted   = msgType == 15 ||
-                        (fromMe == 1 && status == 5 && editVersion == 7) ||
-                        (fromMe == 0 && status == 0 && editVersion == 7)
-                    val isSystem    = status == 6
-                    val senderJid   = c.getString(15) ?: ""
-                    val forwardScore = c.getInt(26)
-                    list.add(Message(
-                        id                  = msgId,
-                        chatId              = c.getLong(14),
-                        chatJid             = c.getString(0) ?: "",
-                        textData            = c.getString(5) ?: "",
-                        fromMe              = fromMe,
-                        timestamp           = c.getLong(3),
-                        receivedTimestamp   = c.getLong(4),
-                        sortId              = c.getLong(13),
-                        messageType         = msgType,
-                        status              = status,
-                        editVersion         = editVersion,
-                        keyId               = c.getString(8) ?: "",
-                        senderJid           = senderJid,
-                        senderName          = if (fromMe == 1) "You"
-                                              else contactNameMap[senderJid]
-                                                  ?: senderJid.substringBefore("@"),
-                        chatSubject         = c.getString(16) ?: "",
-                        isDeleted           = isDeleted,
-                        isSystem            = isSystem,
-                        isVideoCall         = c.getInt(25) == 1,
-                        isForwarded         = forwardScore > 0,
-                        forwardScore        = forwardScore,
-                        starred             = c.getInt(9),
-                        broadcast           = c.getInt(10),
-                        translatedText      = c.getString(11) ?: "",
-                        latitude            = c.getDouble(22),
-                        longitude           = c.getDouble(23),
-                        placeName           = c.getString(27) ?: "",
-                        placeAddress        = c.getString(28) ?: "",
-                        quotedKeyId         = c.getString(17) ?: "",
-                        quotedFromMe        = c.getInt(18),
-                        quotedMessageType   = c.getInt(19),
-                        quotedText          = c.getString(20) ?: "",
-                        quotedSender        = c.getString(21) ?: "",
-                        actionType          = c.getInt(24),
-                        deletedForEveryone  = msgId in revokedForAll
-                    ))
-                }
+                if (c.moveToFirst()) c.getInt(0) else 0
             }
-            list
-        } catch (e: Exception) { log("Messages error: ${e.message}"); emptyList()
-        } finally { db.close() }
+        } catch (e: Exception) {
+            log("Message count error: ${e.message}")
+            0
+        } finally {
+            db.close()
+        }
+    }
+
+    private fun streamMessages(
+        cacheDir: File,
+        onMessage: (Message) -> Unit,
+        onProgress: (Int) -> Unit = {}
+    ) {
+        val db = openDb(cacheDir, "msgstore.db") ?: return
+        val contactNameMap = buildContactNameMap(cacheDir)
+        try {
+            val revokedForAll = buildRevokedSet(db)
+            db.rawQuery(buildMessageQuery(db), null).use { c ->
+                var processed = 0
+                while (c.moveToNext()) {
+                    onMessage(mapMessage(c, contactNameMap, revokedForAll))
+                    processed++
+                    if (processed % 5000 == 0) {
+                        log("Messages streamed: $processed")
+                        onProgress(processed)
+                    }
+                }
+                onProgress(processed)
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    private fun buildMessageQuery(db: SQLiteDatabase): String {
+        val placeNameSql = if (hasColumn(db, "message_location", "place_name")) "COALESCE(loc.place_name, '')" else "''"
+        val placeAddrSql = if (hasColumn(db, "message_location", "address")) "COALESCE(loc.address, '')" else "''"
+        return """
+            SELECT
+                COALESCE(lid_chat.raw_string, jid_chat.raw_string) as chat_jid,
+                msg._id,
+                msg.from_me,
+                msg.timestamp,
+                COALESCE(msg.received_timestamp, 0),
+                COALESCE(msg.text_data, ''),
+                msg.status,
+                COALESCE(mf_ver.version, 0) as edit_version,
+                msg.key_id,
+                COALESCE(msg.starred, 0),
+                COALESCE(msg.broadcast, 0),
+                COALESCE(msg.translated_text, ''),
+                msg.message_type,
+                msg.sort_id,
+                msg.chat_row_id,
+                COALESCE(lid_sender.raw_string, jid_sender.raw_string, '') as sender_jid,
+                COALESCE(chat.subject, '') as chat_subject,
+                COALESCE(mq.key_id, '') as quoted_key_id,
+                COALESCE(mq.from_me, 0) as quoted_from_me,
+                COALESCE(mq.message_type, 0) as quoted_msg_type,
+                COALESCE(mq.text_data, '') as quoted_text,
+                COALESCE(lid_qsender.raw_string, jid_qsender.raw_string, '') as quoted_sender_jid,
+                COALESCE(loc.latitude, 0.0) as latitude,
+                COALESCE(loc.longitude, 0.0) as longitude,
+                COALESCE(sys.action_type, 0) as action_type,
+                COALESCE(mcl.video_call, 0) as is_video_call,
+                COALESCE(mfwd.forward_score, 0) as forward_score,
+                $placeNameSql as place_name,
+                $placeAddrSql as place_address
+            FROM message msg
+            JOIN chat ON chat._id = msg.chat_row_id
+            JOIN jid jid_chat ON jid_chat._id = chat.jid_row_id
+            LEFT JOIN jid_map jm_chat ON chat.jid_row_id = jm_chat.lid_row_id
+            LEFT JOIN jid lid_chat ON jm_chat.jid_row_id = lid_chat._id
+            LEFT JOIN jid jid_sender ON jid_sender._id = msg.sender_jid_row_id
+            LEFT JOIN jid_map jm_sender ON msg.sender_jid_row_id = jm_sender.lid_row_id
+            LEFT JOIN jid lid_sender ON jm_sender.jid_row_id = lid_sender._id
+            LEFT JOIN message_quoted mq ON mq.message_row_id = msg._id
+            LEFT JOIN jid jid_qsender ON jid_qsender._id = mq.sender_jid_row_id
+            LEFT JOIN jid_map jm_qsender ON mq.sender_jid_row_id = jm_qsender.lid_row_id
+            LEFT JOIN jid lid_qsender ON jm_qsender.jid_row_id = lid_qsender._id
+            LEFT JOIN message_location loc ON loc.message_row_id = msg._id
+            LEFT JOIN message_future mf_ver ON mf_ver.message_row_id = msg._id
+            LEFT JOIN message_system sys ON sys.message_row_id = msg._id
+            LEFT JOIN missed_call_logs mcl ON mcl.message_row_id = msg._id
+            LEFT JOIN message_forwarded mfwd ON mfwd.message_row_id = msg._id
+            WHERE COALESCE(lid_chat.raw_string, jid_chat.raw_string) <> '-1'
+            GROUP BY msg._id
+            ORDER BY msg.timestamp ASC, msg._id ASC
+        """.trimIndent()
+    }
+
+    private fun mapMessage(
+        c: Cursor,
+        contactNameMap: Map<String, String>,
+        revokedForAll: Set<Long>
+    ): Message {
+        val msgId       = c.getLong(1)
+        val msgType     = c.getInt(12)
+        val status      = c.getInt(6)
+        val editVersion = c.getInt(7)
+        val fromMe      = c.getInt(2)
+        val isDeleted   = msgType == 15 ||
+            (fromMe == 1 && status == 5 && editVersion == 7) ||
+            (fromMe == 0 && status == 0 && editVersion == 7)
+        val isSystem    = status == 6
+        val senderJid   = c.getString(15) ?: ""
+        val forwardScore = c.getInt(26)
+        return Message(
+            id                  = msgId,
+            chatId              = c.getLong(14),
+            chatJid             = c.getString(0) ?: "",
+            textData            = c.getString(5) ?: "",
+            fromMe              = fromMe,
+            timestamp           = c.getLong(3),
+            receivedTimestamp   = c.getLong(4),
+            sortId              = c.getLong(13),
+            messageType         = msgType,
+            status              = status,
+            editVersion         = editVersion,
+            keyId               = c.getString(8) ?: "",
+            senderJid           = senderJid,
+            senderName          = if (fromMe == 1) "You"
+                                  else contactNameMap[senderJid]
+                                      ?: senderJid.substringBefore("@"),
+            chatSubject         = c.getString(16) ?: "",
+            isDeleted           = isDeleted,
+            isSystem            = isSystem,
+            isVideoCall         = c.getInt(25) == 1,
+            isForwarded         = forwardScore > 0,
+            forwardScore        = forwardScore,
+            starred             = c.getInt(9),
+            broadcast           = c.getInt(10),
+            translatedText      = c.getString(11) ?: "",
+            latitude            = c.getDouble(22),
+            longitude           = c.getDouble(23),
+            placeName           = c.getString(27) ?: "",
+            placeAddress        = c.getString(28) ?: "",
+            quotedKeyId         = c.getString(17) ?: "",
+            quotedFromMe        = c.getInt(18),
+            quotedMessageType   = c.getInt(19),
+            quotedText          = c.getString(20) ?: "",
+            quotedSender        = c.getString(21) ?: "",
+            actionType          = c.getInt(24),
+            deletedForEveryone  = msgId in revokedForAll
+        )
     }
 
     // ─── Media Index ──────────────────────────────────────────────────────────
@@ -352,8 +442,7 @@ class ExtractRepository @Inject constructor(
      * status is "missing" at this point — ExportManager updates to "downloaded" / "skipped"
      * after the media copy step by scanning the actual mediaDir.
      */
-    private fun buildMediaIndex(messages: List<Message>): List<MediaEntry> {
-        val cacheDir = FileUtils.getCacheDir(context)
+    private fun buildMediaIndex(cacheDir: File): List<MediaEntry> {
         val db = openDb(cacheDir, "msgstore.db") ?: return emptyList()
         return try {
             // media_hash column name varies by WA version — check before including
@@ -379,6 +468,13 @@ class ExtractRepository @Inject constructor(
                     COALESCE(mm.transferred, 0) as transferred,
                     $hashSql as media_hash
                 FROM message_media mm
+                JOIN message msg ON msg._id = mm.message_row_id
+                JOIN chat ON chat._id = msg.chat_row_id
+                JOIN jid jid_chat ON jid_chat._id = chat.jid_row_id
+                LEFT JOIN jid_map jm_chat ON chat.jid_row_id = jm_chat.lid_row_id
+                LEFT JOIN jid lid_chat ON jm_chat.jid_row_id = lid_chat._id
+                WHERE COALESCE(lid_chat.raw_string, jid_chat.raw_string) <> '-1'
+                ORDER BY mm.message_row_id ASC
             """.trimIndent(), null).use { c ->
                 while (c.moveToNext()) {
                     val msgId    = c.getLong(0)
@@ -399,10 +495,139 @@ class ExtractRepository @Inject constructor(
                     )
                 }
             }
-            val msgIds = messages.map { it.id }.toHashSet()
-            mediaMap.values.filter { it.messageId in msgIds }
+            mediaMap.values.toList()
         } catch (e: Exception) { log("MediaIndex error: ${e.message}"); emptyList()
         } finally { db.close() }
+    }
+
+    private fun readStarredMessageIds(cacheDir: File): List<Long> {
+        val db = openDb(cacheDir, "msgstore.db") ?: return emptyList()
+        return try {
+            val list = mutableListOf<Long>()
+            db.rawQuery("""
+                SELECT msg._id
+                FROM message msg
+                JOIN chat ON chat._id = msg.chat_row_id
+                JOIN jid jid_chat ON jid_chat._id = chat.jid_row_id
+                LEFT JOIN jid_map jm_chat ON chat.jid_row_id = jm_chat.lid_row_id
+                LEFT JOIN jid lid_chat ON jm_chat.jid_row_id = lid_chat._id
+                WHERE COALESCE(lid_chat.raw_string, jid_chat.raw_string) <> '-1'
+                  AND COALESCE(msg.starred, 0) = 1
+                ORDER BY msg.timestamp ASC, msg._id ASC
+            """.trimIndent(), null).use { c ->
+                while (c.moveToNext()) {
+                    list.add(c.getLong(0))
+                }
+            }
+            list
+        } catch (e: Exception) {
+            log("Starred messages error: ${e.message}")
+            emptyList()
+        } finally {
+            db.close()
+        }
+    }
+
+    private fun writeMessagesArrayField(
+        writer: BufferedWriter,
+        cacheDir: File,
+        expectedTotal: Int,
+        onProgress: (String) -> Unit
+    ) {
+        writer.appendLine("  \"messages\": [")
+        var processed = 0
+        var previousEncoded: String? = null
+        streamMessages(
+            cacheDir = cacheDir,
+            onMessage = { message ->
+                val encoded = exportJson.encodeToString(Message.serializer(), message)
+                previousEncoded?.let { writeArrayItem(writer, it, trailingComma = true) }
+                previousEncoded = encoded
+                processed++
+                if (processed % 5000 == 0) {
+                    onProgress("Streaming messages: $processed/$expectedTotal")
+                    writer.flush()
+                }
+            },
+            onProgress = { count ->
+                if (count > 0) {
+                    onProgress("Reading messages: $count/$expectedTotal")
+                }
+            }
+        )
+        previousEncoded?.let { writeArrayItem(writer, it, trailingComma = false) }
+        writer.write("  ],")
+        writer.newLine()
+        log("Messages serialized: $processed / expected $expectedTotal")
+    }
+
+    private fun <T> writeNamedJsonValue(
+        writer: BufferedWriter,
+        name: String,
+        serializer: KSerializer<T>,
+        value: T,
+        trailingComma: Boolean
+    ) {
+        writeNamedRawJson(writer, name, exportJson.encodeToString(serializer, value), trailingComma)
+    }
+
+    private fun writeNamedRawJson(
+        writer: BufferedWriter,
+        name: String,
+        encoded: String,
+        trailingComma: Boolean
+    ) {
+        val lines = encoded.lines()
+        lines.forEachIndexed { index, line ->
+            if (index == 0) {
+                writer.write("  \"$name\": ")
+            } else {
+                writer.write("  ")
+            }
+            writer.write(line)
+            if (index == lines.lastIndex && trailingComma) writer.write(",")
+            writer.newLine()
+        }
+    }
+
+    private fun <T> writeSerializedArrayField(
+        writer: BufferedWriter,
+        name: String,
+        serializer: KSerializer<T>,
+        items: List<T>,
+        trailingComma: Boolean
+    ) {
+        if (items.isEmpty()) {
+            writer.write("  \"$name\": []")
+            if (trailingComma) writer.write(",")
+            writer.newLine()
+            return
+        }
+        writer.appendLine("  \"$name\": [")
+        items.forEachIndexed { index, item ->
+            writeArrayItem(
+                writer = writer,
+                encoded = exportJson.encodeToString(serializer, item),
+                trailingComma = index != items.lastIndex
+            )
+        }
+        writer.write("  ]")
+        if (trailingComma) writer.write(",")
+        writer.newLine()
+    }
+
+    private fun writeArrayItem(
+        writer: BufferedWriter,
+        encoded: String,
+        trailingComma: Boolean
+    ) {
+        val lines = encoded.lines()
+        lines.forEachIndexed { index, line ->
+            writer.write("    ")
+            writer.write(line)
+            if (index == lines.lastIndex && trailingComma) writer.write(",")
+            writer.newLine()
+        }
     }
 
     /**
