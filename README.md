@@ -1,17 +1,46 @@
 <div align="center">
 
+<img src="./app/src/main/res/drawable/wa_sensai_logo_3d.png" alt="WA Sensai logo" width="128" />
+
 # WA Sensai
 
-📦 Rooted Android extractor and offline `.waview` viewer for WhatsApp data.
+<strong>Rooted Android extractor and offline `.waview` viewer for WhatsApp data.</strong>
 
 Built for high-integrity local extraction, packaging, and offline viewing of real WhatsApp Business history on rooted Android devices.
 
+<br>
+
+<a href="#quick-glance"><img alt="Quick Glance" src="https://img.shields.io/badge/Quick_Glance-052E2B?style=for-the-badge"></a>
+<a href="#screenshots"><img alt="Screenshots" src="https://img.shields.io/badge/Screenshots-0F766E?style=for-the-badge"></a>
+<a href="#standalone-web-viewer-beta"><img alt="Web Viewer" src="https://img.shields.io/badge/Web_Viewer-312E81?style=for-the-badge"></a>
+<a href="#privacy-and-data-handling"><img alt="Privacy" src="https://img.shields.io/badge/Privacy_Local-0B1220?style=for-the-badge"></a>
+
+<br><br>
+
+<img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white">
+<img alt="Jetpack Compose" src="https://img.shields.io/badge/Jetpack_Compose-4285F4?style=flat-square&logo=jetpackcompose&logoColor=white">
+<img alt="Android" src="https://img.shields.io/badge/Rooted_Android-3DDC84?style=flat-square&logo=android&logoColor=white">
+<img alt="Archive format" src="https://img.shields.io/badge/Archive-.waview-0F766E?style=flat-square">
+
 </div>
+
+<br>
+
+<p align="center">
+  <img src="./screenshots/home-accent-1.png" alt="WA Sensai home screen" width="245" />
+  <img src="./screenshots/chat-list-edited.png" alt="WA Sensai edited chat list" width="245" />
+  <img src="./screenshots/chat-window-edited.png" alt="WA Sensai edited chat window" width="245" />
+</p>
+
+<p align="center">
+  <sub>Private rooted extraction, packaged archive integrity, and offline local viewing for large WhatsApp Business history.</sub>
+</p>
 
 ---
 
 ## Table Of Contents
 
+- [Quick Glance](#quick-glance)
 - [Scope And Intent](#scope-and-intent)
 - [Tested Environment](#tested-environment)
 - [Compatibility Notes](#compatibility-notes)
